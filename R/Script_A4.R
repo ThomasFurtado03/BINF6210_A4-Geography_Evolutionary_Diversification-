@@ -1,12 +1,15 @@
 ##Required Packages----
 install.packages("ggseqlogo")
 
+library(ggplot2)
 library(Biostrings)
 library(tidyverse)
 library(DECIPHER)
 library(ggseqlogo)
 library(phangorn)
 library(ape)
+
+#Data collection and inspection----
 
 ##Data Aqcuisition: Hyla ctyb sequences were downloaded (all results) from NCBI, after filtering for genomic DNA data only.
 
@@ -19,12 +22,14 @@ summary(seq_lengths)
 
 
 headers <- names(raw_seqs)
-
+headers
 species <- headers %>% 
   str_split(" ") %>% 
   map_chr(~ paste(.x[2], .x[3]))
 
 head(species, 20)
+
+##Data exploration and filtering----
 
 #convert to df
 
@@ -41,7 +46,7 @@ head(seq_df)
 table(seq_df$species)
 
 #Lets filter the data set.
-#Lets filter by length, no less than 700, and no more than 1500
+#Lets filter by length, no less than 700, and no more than 1500. (This is the expected range for cytb!)
 
 seq_length_filtered <- seq_df %>% 
   filter(length >= 700, length <= 1500)
@@ -85,12 +90,34 @@ final_headers <- seq_final$header
 final_seqs <- raw_seqs[final_headers]
 final_seqs
 
-#Now, let's align these sequences
+#Lets use an exploratory figure to evaluate the data set so far!
+ggplot(seq_final, aes(x = length)) +
+  geom_histogram(binwidth = 20, fill = "steelblue") +
+  theme_minimal() +
+  labs(
+    title = "Distribution of CytB Sequence Lengths",
+    x = "Length (bp)",
+    y = "Count"
+  )
+#There is a little variances in the sizes, with a clear cluster around 900bp. Significant differences could be from extra flanking regions, or slightly different amplification fragments may have been used.
+#Nonetheless, the data looks prepared for further analysis
+
+
+
+
+
+
+##Alignment and visualization----
 
 aligned_seqs <- AlignSeqs(final_seqs)
 
 aligned_seqs
 BrowseSeqs(aligned_seqs)
+
+
+
+
+
 
 ##Build Neighbor Joining Tree----
 
@@ -230,4 +257,107 @@ nodelabels(
 title("Maximum Likelihood Tree with Bootstrap Support")
 
 
+##Collection and addition of geographic information----
+
+#Geographic regions were manually assigned at the species level using range information from AmphibiaWeb (amphibiaweb.org). A custom region table was created linking each Hyla species in the dataset to its known geographic distribution.
+
+region_broad <- tibble(
+  species = c(
+    "Hyla annectans",
+    "Hyla arborea",
+    "Hyla carthaginiensis",
+    "Hyla chinensis",
+    "Hyla felixarabica",
+    "Hyla hallowellii",
+    "Hyla heinzsteinitzi",
+    "Hyla intermedia",
+    "Hyla meridionalis",
+    "Hyla molleri",
+    "Hyla orientalis",
+    "Hyla perrini",
+    "Hyla sanchiangensis",
+    "Hyla sarda",
+    "Hyla savignyi",
+    "Hyla tsinlingensis"
+  ),
+  region_broad = c(
+    "Asia",         # annectans
+    "Europe",       # arborea
+    "North Africa", # carthaginiensis
+    "Asia",         # chinensis
+    "Middle East",  # felixarabica
+    "Asia",         # hallowellii
+    "Middle East",  # heinzsteinitzi
+    "Europe",       # intermedia
+    "Europe",       # meridionalis
+    "Europe",       # molleri
+    "Middle East",  # orientalis
+    "Middle East",  # perrini
+    "Asia",         # sanchiangensis
+    "Europe",       # sarda
+    "Middle East",  # savignyi
+    "Asia"          # tsinlingensis
+  )
+)
+
+
+#Now finally, lets join this with my data so we can continue and answer geographic questions.
+
+seq_with_regions <- seq_final %>%
+  left_join(region_broad, by = "species")
+
+table(seq_with_regions$region_broad)
+
+#Lets turn this into a clear and simple histogram!
+
+ggplot(seq_with_regions, aes(x = region_broad)) +
+  geom_bar(fill = "steelblue") +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Number of Hyla Species per Broad Geographic Region",
+    x = "Region",
+    y = "Species Count"
+  )
+
+#Just as a quick check, Summing all of these numbers up gives us 16, which matches what we have filtered down for!
+
+##ML tree coloured by region----
+
+
+#I will assign each region a generic colour
+region_colours <- c(
+  "Europe" = "#1f78b4",
+  "Asia" = "#33a02c",
+  "Middle East" = "#ff7f00",
+  "North Africa" = "#e31a1c"
+)
+
+#Ensure consistent margins
+par(mar = c(1, 1, 2, 1))
+
+#Lets plot the bootstrapped tree with colours indicating which region they are from!
+#(Run all lines in subsequent block)
+plot(
+  ml_tree_bs,
+  cex = 0.8,
+  label.offset = 0.010
+)
+tiplabels(
+  pch = 21,
+  bg = region_colours[seq_with_regions$region_broad],
+  cex = 1.0,
+  label.offset = 0.0100
+)
+legend(
+  "topright",
+  legend = names(region_colours),
+  col = region_colours,
+  pch = 19,
+  bty = "n",
+  xpd = NA,
+  cex = 0.90,
+  inset = c(0, -0.07)
+)
+title("Maximum Likelihood Tree of Hyla Species\nColoured by Broad Geographic Region",
+      cex.main = 0.85 )
 
