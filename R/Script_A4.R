@@ -1,6 +1,8 @@
 ##Required Packages----
 install.packages("ggseqlogo")
+install.packages("caper")
 
+library(phytools)
 library(ggplot2)
 library(Biostrings)
 library(tidyverse)
@@ -8,6 +10,8 @@ library(DECIPHER)
 library(ggseqlogo)
 library(phangorn)
 library(ape)
+library(caper)
+
 
 #Data collection and inspection----
 
@@ -259,7 +263,7 @@ title("Maximum Likelihood Tree with Bootstrap Support")
 
 ##Collection and addition of geographic information----
 
-#Geographic regions were manually assigned at the species level using range information from AmphibiaWeb (amphibiaweb.org). A custom region table was created linking each Hyla species in the dataset to its known geographic distribution.
+#Geographic regions were manually assigned at the species level using global distribution information from GBIF (gbif.org). A custom region table was created linking each Hyla species in the dataset to its known geographic distribution.
 
 region_broad <- tibble(
   species = c(
@@ -307,6 +311,7 @@ seq_with_regions <- seq_final %>%
   left_join(region_broad, by = "species")
 
 table(seq_with_regions$region_broad)
+
 
 #Lets turn this into a clear and simple histogram!
 
@@ -360,4 +365,122 @@ legend(
 )
 title("Maximum Likelihood Tree of Hyla Species\nColoured by Broad Geographic Region",
       cex.main = 0.85 )
+
+#Europe seems to be split, as some cluster and some do not. The
+
+#Middle East is scattered, phylogenetically dispersed around the tree. 
+
+#As for NA, there is insufficient data for comparison.
+
+#Looking at the distribution by region, The species from Asia look to be very compact in the centre of the tree and all share a clade. I will test their relationship further.
+
+
+
+##Performing D test----
+
+#The D test tests a if binary trait is phylogenetically clutered, or randomly distributed across the tree.
+
+#I will use this to answer my initial research question: 
+#"Do Hyla species form distinct geographic clades corresponding to major regions?"
+
+
+#I must first build a data frame for caper
+trait_df <- data.frame(
+  species = seq_with_regions$species,
+  region = seq_with_regions$region_broad
+)
+
+#Make rownames which match the tree tips
+rownames(trait_df) <- trait_df$species
+
+#Binary Trait: from asia, or not from asia. Lets make it express the result numerically to easily use in the test.
+
+trait_df$is_asia <- as.numeric(trait_df$region == "Asia")
+
+#Let's check the results quickly
+table(trait_df$is_asia)
+
+#Nice, we have 11 non-asian species, and 5 asian species!
+
+#Now I must prepare comparitive data as input for phylo.d
+
+#But before this, I find I must "root my tree" for the analysis.
+ml_tree_rooted <- midpoint(ml_tree_clean)
+is.rooted(ml_tree_rooted)
+
+ml_tree_rooted
+
+?comparative.data
+#Must enable vcv to calculate the covariance matrix
+comp_data_asia <- comparative.data(
+  phy = ml_tree_rooted,
+  data = trait_df,
+  names.col = species,
+  vcv = TRUE,
+  warn.dropped = TRUE
+)
+
+#Now lets run the D test!
+?phylo.d
+
+dtest_result_asia <- phylo.d(comp_data_asia, binvar = is_asia)
+dtest_result_asia
+
+
+#D = -2.94 (VERY negative). This means that the Asian species are strongly phlogenetically clustered.
+#This means that the Asian species share a clear phylogenetic signal and likely diverged from a common Asian ancestor rather than being scattered across the tree!
+
+#The test also reveals that it follows a Brownian clustering model quite closely (0.979)
+
+
+
+#Now lets run the same test using the European species!
+trait_df$is_europe <- as.numeric(trait_df$region == "Europe")
+table(trait_df$is_europe)
+
+comp_data_europe <- comparative.data(
+  phy = ml_tree_rooted,
+  data = trait_df,
+  names.col = species,
+  vcv = TRUE,
+  warn.dropped = TRUE
+)
+
+dtest_result_europe <- phylo.d(comp_data_europe, binvar = is_europe)
+dtest_result_europe
+
+
+##Interpretation of results and literature consultation----
+
+
+#These results are very interesting.. D is close to 1, which means that the trait is evolving randomly on the tree, and shows no real phylogenetic clustering. In other words, European species do NOT group together more than expected by chance!
+
+#The p(Brownian) is not significant, and therefore does not show a pattern of phylogenetic conservatism.
+
+#This means that the situation is as follows: Asia shows phylogentetic clustering, while others (Europe) are randomly distributed. Possibly indicating that geography incosistently affects diversification across Hyla.
+
+
+
+#Asian Hyla species showed strong phylognetic clustering (D << 0), which likely reflects a combination of true biological history, and sampling structure.
+#Upon consulting the literature, most Asian Hyla actually belong to a single and recent  monophyletic radiation, primarily 2 distinct clades existing in East Asia, both of which diverged only 5 million years ago. (Dufresnes et al., 2016). 
+
+##Dufresnes, C., Litvinchuk, S. N., Borzée, A., Jang, Y., Li, J.-T., Miura, I., Perrin, N., & Stöck, M. (2016). Phylogeography reveals an ancient cryptic radiation in east-asian tree frogs (Hyla japonica group) and complex relationships between Continental and island lineages. BMC Evolutionary Biology, 16(1). https://doi.org/10.1186/s12862-016-0814-x 
+
+#Since this is true, This means that there is a higher likelihood that closely related species will end up being sampled from Asian regions. Thus explaining the strong correlation detected by the D test. This means that these strong results from Asian species are true, as they are in fact closely related, but can ALSO be explained by sampling bias.
+
+
+#Now how do we explain the results for Europe? Why are they not as tightly packed together as Asia, even though they are both their own distinct regions?
+
+
+#The literature shows that Phylogenetic analysis revealed there to be THREE highly diverged lineages: H. arborea (Greece, North France, Central Europe), H. molleri (Iberian Peninsula [Spain/Portugal]) and H. orientalis (Northeastern Europe) (Stöck et al., 2012). 
+
+#In addition to 3 highly diverged and old lineages, H. arborea exhibits molecular signatures of postglacial range expansion(Stöck et al., 2012).
+
+#Given these pieces of information, the results seem a lot more reasonable. The answer is that Europe's geography is diverse, widespread, and consists of hybrid zones and glacial range expansions throughout the Earth's history. So it is quite reasonable that the species studied form Europe do not match as closely as the Asian ones do. And it comes down to the geographic history of the sampled regions! 
+
+#Due to this, this investigation shows that geographic diversification patterns in Hyla differ STRONGLY among regions. As a result of specific geographic history, and sampling structure.
+
+
+##Stöck, M., Dufresnes, C., Litvinchuk, S. N., Lymberakis, P., Biollay, S., Berroneau, M., Borzée, A., Ghali, K., Ogielska, M., & Perrin, N. (2012). Cryptic diversity among western palearctic tree frogs: Postglacial range expansion, range limits, and secondary contacts of three European tree frog lineages (Hyla arborea group). Molecular Phylogenetics and Evolution, 65(1), 1–9. https://doi.org/10.1016/j.ympev.2012.05.014 
+
 
