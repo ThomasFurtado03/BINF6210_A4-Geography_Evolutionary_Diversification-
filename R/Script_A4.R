@@ -1,6 +1,7 @@
 ##Required Packages----
 install.packages("ggseqlogo")
 install.packages("caper")
+install.packages("cowplot")
 
 library(phytools)
 library(ggplot2)
@@ -11,6 +12,10 @@ library(ggseqlogo)
 library(phangorn)
 library(ape)
 library(caper)
+library(cowplot)
+library(ggtree)
+library(dplyr)
+
 
 
 #Data collection and inspection----
@@ -19,6 +24,9 @@ library(caper)
 
 raw_seqs <- readDNAStringSet("data/sequence.fasta")
 
+summary(raw_seqs)
+
+length(raw_seqs)
 head(names(raw_seqs), 20)
 
 seq_lengths <- width(raw_seqs)
@@ -58,6 +66,10 @@ seq_length_filtered <- seq_df %>%
 nrow(seq_length_filtered)
 length(unique(seq_length_filtered$species))
 
+
+length(raw_seqs) - nrow(seq_length_filtered)
+
+seq_final$species
 #To further filter, we will keep the longest sequence for each species, which should be the most complete cytb
 
 seq_longest_per_species <- seq_length_filtered %>% 
@@ -157,7 +169,7 @@ plot(
   cex = 0.7,
   label.offset = 0.002,
 )
-title("Neighbor-Joining Tree (species labels only)", cex.main = 1.0)
+title("Neighbor-Joining tree of selected Hyla lineages", cex.main = 1.0)
 
 
 ##Build Maximum Likelihood Tree----
@@ -258,7 +270,17 @@ nodelabels(
   cex = 0.7,
   adj = c(1.0, -0.2)
 )
-title("Maximum Likelihood Tree with Bootstrap Support")
+title("Maximum Likelihood tree with bootstrap support")
+
+
+#There are 8 out of 14 nodes that have >= 50% boostrap support!
+
+hist(as.numeric(ml_tree_bs$node.label),
+     breaks=10, col="steelblue", border="white",
+     main="Bootstrap Support Distribution",
+     xlab="Bootstrap value")
+abline(v=0.5, col="red", lwd=2, lty=2)
+
 
 
 ##Collection and addition of geographic information----
@@ -282,7 +304,7 @@ region_broad <- tibble(
     "Hyla sanchiangensis",
     "Hyla sarda",
     "Hyla savignyi",
-    "Hyla tsinlingensis"
+  "Hyla tsinlingensis"
   ),
   region_broad = c(
     "Asia",         # annectans
@@ -363,8 +385,10 @@ legend(
   cex = 0.90,
   inset = c(0, -0.07)
 )
-title("Maximum Likelihood Tree of Hyla Species\nColoured by Broad Geographic Region",
+title("Maximum Likelihood tree of Hyla species\ncoloured by broad geographic region",
       cex.main = 0.85 )
+
+#Asia can easily be identified as monophyletic, while Europe and Middle East do not form distinct clades within themselves.
 
 #Europe seems to be split, as some cluster and some do not. The
 
@@ -404,7 +428,7 @@ table(trait_df$is_asia)
 
 #Now I must prepare comparitive data as input for phylo.d
 
-#But before this, I find I must "root my tree" for the analysis.
+#But before this, I find I must "root" my tree for the analysis.
 ml_tree_rooted <- midpoint(ml_tree_clean)
 is.rooted(ml_tree_rooted)
 
@@ -450,6 +474,113 @@ dtest_result_europe <- phylo.d(comp_data_europe, binvar = is_europe)
 dtest_result_europe
 
 
+#Now for Middle-East for completion purposes:
+
+trait_df$is_me <- as.numeric(trait_df$region == "Middle East")
+
+comp_data_me <- comparative.data(
+  phy = ml_tree_rooted,
+  data = trait_df,
+  names.col = species,
+  vcv = TRUE,
+  warn.dropped = TRUE
+)
+
+dtest_result_me <- phylo.d(comp_data_me, binvar = is_me)
+dtest_result_me
+
+
+
+
+##Final Figure----
+
+
+#Lets collect all of the D-test information
+D_table <- tibble(
+  Region   = c("Asia", "Europe", "Middle East"),
+  D_value  = c(
+    dtest_result_asia$DEstimate,
+    dtest_result_europe$DEstimate,
+    dtest_result_me$DEstimate
+  )
+)
+
+#I will exclude North Africa form this visualization, it's sample size is low and is not fit for representation with a D-test.
+counts_df <- seq_with_regions %>%
+  filter(region_broad != "North Africa") %>%
+  count(region_broad, name = "n")
+
+plot_df <- counts_df %>%
+  left_join(D_table, by = c("region_broad" = "Region"))
+
+p_bar <- ggplot(plot_df, aes(y = region_broad, x = n, fill = region_broad)) +
+  geom_col(width=0.6, color="black") +
+  geom_text(aes(label = paste0("D = ", round(D_value,2)), x = n + 0.15),
+            size=4.5, hjust=0) +
+  scale_fill_manual(values = region_colours) +
+  coord_cartesian(clip="off", xlim=c(0,6.2)) +
+  theme_minimal(base_size=13) +
+  theme(
+    legend.position="none",
+    axis.text.y = element_text(face="bold")
+  ) +
+  labs(title="Phylogenetic Signal Across Regions",
+       x="Species Count",
+       y="Region")
+
+#Let's see what he have so far!
+p_bar
+
+#To assemble the final figure, I will add it to the region-annotated tree!
+par(mar=c(1,1,2,1))
+
+plot(ml_tree_bs, cex=0.8, label.offset=0.010)
+tiplabels(pch=21, bg=region_colours[seq_with_regions$region_broad], cex=1)
+
+
+
+#Lets define the Asia nodes for nice annotation!
+asia_tips <- seq_with_regions$species[seq_with_regions$region_broad == "Asia"]
+asia_mrca <- getMRCA(true_tree, asia_tips)
+asia_mrca
+
+
+true_tree <- ml_tree_clean
+
+
+#Lets capture the tree and begin formatting
+tree_panel <- ggtree(true_tree,
+                     layout = "rectangular",
+                     ladderize = FALSE,
+                     branch.length = "branch.length",
+                     size = 0.4) %<+% tree_meta +
+  geom_tippoint(aes(color = region_broad), size = 3) +
+  scale_color_manual(values = region_colours) +
+  theme_tree2(base_size = 14) +
+  theme(
+    legend.position = "none",
+    plot.margin = margin(5,5,5,5)
+  )
+
+#Adding the Asia annotation  
+tree_panel <- tree_panel +
+  geom_hilight(node = asia_mrca,
+               fill = NA,
+               color = "red",
+               size = 1.4,
+               extend = 0.05
+)
+#Use cowplot to present two plots
+final_summary <- cowplot::plot_grid(
+  p_bar,          
+  tree_panel,     
+  ncol = 2,
+  rel_widths = c(2.0, 1.6)
+)
+
+final_summary
+
+
 ##Interpretation of results and literature consultation----
 
 
@@ -482,5 +613,23 @@ dtest_result_europe
 
 
 ##Stöck, M., Dufresnes, C., Litvinchuk, S. N., Lymberakis, P., Biollay, S., Berroneau, M., Borzée, A., Ghali, K., Ogielska, M., & Perrin, N. (2012). Cryptic diversity among western palearctic tree frogs: Postglacial range expansion, range limits, and secondary contacts of three European tree frog lineages (Hyla arborea group). Molecular Phylogenetics and Evolution, 65(1), 1–9. https://doi.org/10.1016/j.ympev.2012.05.014 
+
+
+
+##Comparing Region-labelled ML tree, with Boostrapped ML tree----
+
+#Strong nodes in the bootstrap tree(>0.7): seperation of major Asian clade, European species (H. arborea, H.intermedia, H.perrini)
+
+#Asian clade: well supported monophyletic group. Weak internal splits, expected for younger (5 mya) branches
+
+#European clade: many strong, well supported nodes. But, they are scattered across the tree, matching the idea of fragmented geographical history.
+
+#When comparing the bootstrap-supported ML tree with the region-coloured ML tree, the major geographic patterns remain consistent.
+#The Asian species form a single, well-supported clade, although several internal branches within this group have low bootstrap values (< 0.5). These weak nodes reflect uncertainty in the exact branching order within a very recent, rapid radiation known for short branch lengths. Importantly, the root node defining the entire Asian clade is strong, meaning the grouping of Asian species is reliable.
+#In contrast, European species do not form a single clade and instead appear across multiple well-supported branches, consistent with their more complex and older evolutionary history.
+#Thus, bootstrap support confirms that broad-scale geographic structure (e.g., the Asian clade) is real, while fine-scale relationships,especially within Asia, reflect rapid diversification and limited phylogenetic resolution.
+
+
+
 
 
